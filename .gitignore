@@ -1,0 +1,13 @@
+.DS_Store
+.build/
+.swiftpm/
+.vscode/
+
+# Built app bundle (rebuild with Scripts/build_app.sh, or download from Releases)
+/Niche.app
+
+# Third-party dependency — Scripts/build_app.sh clones and builds this automatically
+vendor/mediaremote-adapter/
+
+# Generated icon intermediates (kept: Resources/AppIcon.icns)
+Resources/AppIcon.iconset/
