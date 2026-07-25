@@ -8,33 +8,48 @@ struct IslandView: View {
     @ObservedObject var volume: VolumeObserver
     @ObservedObject var brightness: BrightnessObserver
     @ObservedObject var bluetoothHeadphones: BluetoothHeadphoneObserver
+    @ObservedObject var updateChecker: UpdateChecker
 
     @State private var isHovering = false
 
-    private enum Mode { case volume, brightness, bluetooth, expanded, compactNowPlaying, compactIdle }
+    private enum Mode {
+        case volume, brightness, bluetooth, updateAvailable, expanded, compactNowPlaying, compactIdle
+    }
 
     private var mode: Mode {
+        // Connecting headphones often also fires a system volume-property change
+        // (output device switch), which would otherwise flash the volume HUD over
+        // the more relevant "headphones connected" one — bluetooth wins.
+        if bluetoothHeadphones.isVisible { return .bluetooth }
         if volume.isVisible { return .volume }
         if brightness.isVisible { return .brightness }
-        if bluetoothHeadphones.isVisible { return .bluetooth }
+        if updateChecker.isVisible { return .updateAvailable }
         if isHovering { return .expanded }
-        if nowPlaying.current != nil { return .compactNowPlaying }
+        if nowPlaying.isVisible { return .compactNowPlaying }
         return .compactIdle
     }
 
     private var compactSize: CGSize {
         CGSize(width: max(notchWidth + 60, 160), height: compactHeight)
     }
+    /// Idle (nothing playing, not hovering): shrink back down to hug the physical
+    /// notch instead of staying as wide as the now-playing pill.
+    private var idleSize: CGSize {
+        CGSize(width: notchWidth, height: compactHeight)
+    }
     private var expandedSize: CGSize { CGSize(width: 330, height: 160) }
     private var hudSize: CGSize { CGSize(width: 220, height: 40) }
     private var bluetoothSize: CGSize { CGSize(width: 260, height: 46) }
+    private var updateSize: CGSize { CGSize(width: 280, height: 46) }
 
     private var currentSize: CGSize {
         switch mode {
         case .volume, .brightness: hudSize
         case .bluetooth: bluetoothSize
+        case .updateAvailable: updateSize
         case .expanded: expandedSize
-        case .compactNowPlaying, .compactIdle: compactSize
+        case .compactNowPlaying: compactSize
+        case .compactIdle: idleSize
         }
     }
 
@@ -47,6 +62,7 @@ struct IslandView: View {
         case .expanded: 40
         case .volume, .brightness: 20
         case .bluetooth: 22
+        case .updateAvailable: 22
         case .compactNowPlaying, .compactIdle: compactHeight / 2.8
         }
     }
@@ -81,11 +97,13 @@ struct IslandView: View {
     private var content: some View {
         switch mode {
         case .volume:
-            hudContent(iconName: volumeIconName, level: volume.level)
+            hudContent(iconName: volumeIconName, level: volume.isMuted ? 0 : volume.level, tint: Self.volumeTint)
         case .brightness:
-            hudContent(iconName: brightnessIconName, level: brightness.level)
+            hudContent(iconName: brightnessIconName, level: brightness.level, tint: Self.brightnessTint)
         case .bluetooth:
             if let device = bluetoothHeadphones.connected { bluetoothContent(device) }
+        case .updateAvailable:
+            if let info = updateChecker.available { updateContent(info) }
         case .expanded:
             expandedContent
         case .compactNowPlaying:
@@ -95,27 +113,59 @@ struct IslandView: View {
         }
     }
 
-    private func hudContent(iconName: String, level: Float) -> some View {
-        HStack(spacing: 10) {
+    private static let volumeTint = Color(red: 41.0 / 255, green: 255.0 / 255, blue: 198.0 / 255)
+    private static let brightnessTint = Color(red: 1.0, green: 0.8, blue: 0.35)
+
+    private func hudContent(iconName: String, level: Float, tint: Color) -> some View {
+        HStack(spacing: 12) {
+            // Fixed-width icon column: SF Symbols like speaker.slash.fill vs
+            // speaker.wave.3.fill differ in glyph width, which was shifting the bar's
+            // leading edge left/right as the icon swapped. Centering in a fixed frame
+            // keeps the bar's start position stable.
             Image(systemName: iconName)
-                .foregroundColor(.white)
+                .font(.system(size: 14, weight: .semibold))
+                .foregroundStyle(tint)
+                .contentTransition(.symbolEffect(.replace))
+                .frame(width: 20, alignment: .center)
+
             GeometryReader { proxy in
                 ZStack(alignment: .leading) {
-                    Capsule().fill(Color.white.opacity(0.25))
-                    Capsule().fill(Color.white)
-                        .frame(width: proxy.size.width * CGFloat(level))
+                    Capsule().fill(Color.white.opacity(0.18))
+                    Capsule()
+                        .fill(
+                            LinearGradient(
+                                colors: [tint.opacity(0.7), tint],
+                                startPoint: .leading,
+                                endPoint: .trailing
+                            )
+                        )
+                        .frame(width: max(proxy.size.width * CGFloat(level), 5))
                 }
             }
             .frame(height: 5)
         }
         .padding(.horizontal, 16)
+        .animation(.easeOut(duration: 0.2), value: level)
     }
 
     private func bluetoothContent(_ device: BluetoothHeadphoneInfo) -> some View {
         HStack(spacing: 10) {
-            Image(systemName: "airpodspro")
-                .font(.system(size: 18))
-                .foregroundColor(.white)
+            ZStack {
+                Circle()
+                    .fill(
+                        LinearGradient(
+                            colors: [Color.white.opacity(0.22), Color.white.opacity(0.04)],
+                            startPoint: .top,
+                            endPoint: .bottom
+                        )
+                    )
+                    .frame(width: 34, height: 34)
+                Image(systemName: bluetoothIconName(for: device.name))
+                    .font(.system(size: 18))
+                    .symbolRenderingMode(.hierarchical)
+                    .foregroundStyle(.white)
+                    .shadow(color: .black.opacity(0.35), radius: 1, y: 1)
+            }
             VStack(alignment: .leading, spacing: 2) {
                 Text(device.name)
                     .font(.caption)
@@ -123,7 +173,7 @@ struct IslandView: View {
                     .lineLimit(1)
                 if let battery = device.primaryBattery {
                     HStack(spacing: 4) {
-                        Image(systemName: "battery.75")
+                        Image(systemName: batteryIconName(for: battery))
                             .font(.system(size: 9))
                         Text("\(battery)%")
                             .font(.system(size: 10))
@@ -136,8 +186,54 @@ struct IslandView: View {
         .padding(.horizontal, 16)
     }
 
+    private func updateContent(_ info: AppUpdateInfo) -> some View {
+        HStack(spacing: 10) {
+            Image(systemName: "arrow.down.circle.fill")
+                .font(.system(size: 18))
+                .symbolRenderingMode(.hierarchical)
+                .foregroundStyle(Self.volumeTint)
+            VStack(alignment: .leading, spacing: 2) {
+                Text("Có bản cập nhật mới")
+                    .font(.caption)
+                    .foregroundColor(.white)
+                    .lineLimit(1)
+                Text("Phiên bản \(info.version) — nhấn để tải")
+                    .font(.system(size: 10))
+                    .foregroundColor(.white.opacity(0.6))
+                    .lineLimit(1)
+            }
+            Spacer(minLength: 0)
+        }
+        .padding(.horizontal, 16)
+        .contentShape(Rectangle())
+        .onTapGesture { updateChecker.openReleasePage() }
+    }
+
+    /// Picks a model-accurate SF Symbol so the pill reads correctly for AirPods
+    /// (regular/Pro/Max), Beats, or any other Bluetooth headset/headphones — the
+    /// connect gate in BluetoothHeadphoneObserver already ensures this is always
+    /// some kind of headset, never an unrelated accessory.
+    private func bluetoothIconName(for deviceName: String) -> String {
+        let name = deviceName.lowercased()
+        if name.contains("airpods max") { return "airpodsmax" }
+        if name.contains("airpods pro") { return "airpodspro" }
+        if name.contains("airpods") { return "airpods.gen3" }
+        if name.contains("beats") { return "beats.headphones" }
+        return "headphones"
+    }
+
+    private func batteryIconName(for percent: Int) -> String {
+        switch percent {
+        case ..<13: return "battery.0"
+        case ..<38: return "battery.25"
+        case ..<63: return "battery.50"
+        case ..<88: return "battery.75"
+        default: return "battery.100"
+        }
+    }
+
     private var volumeIconName: String {
-        if volume.level <= 0.001 { return "speaker.slash.fill" }
+        if volume.isMuted || volume.level <= 0.001 { return "speaker.slash.fill" }
         if volume.level < 0.33 { return "speaker.wave.1.fill" }
         if volume.level < 0.66 { return "speaker.wave.2.fill" }
         return "speaker.wave.3.fill"
@@ -150,7 +246,7 @@ struct IslandView: View {
     @ViewBuilder
     private var expandedContent: some View {
         if let track = nowPlaying.current {
-            TimelineView(.periodic(from: .now, by: 1)) { timeline in
+            TimelineView(.animation(minimumInterval: 1.0 / 30.0, paused: !track.isPlaying)) { timeline in
                 nowPlayingExpandedBody(track, now: timeline.date)
             }
         } else {
@@ -240,7 +336,7 @@ struct IslandView: View {
                 Image(
                     systemName: nowPlaying.current?.isPlaying == true ? "pause.fill" : "play.fill"
                 )
-                .font(.system(size: 17, weight: .semibold))
+                .font(.system(size: 22, weight: .semibold))
             }
             Button(action: MediaController.next) {
                 Image(systemName: "forward.fill")
@@ -248,18 +344,16 @@ struct IslandView: View {
         }
         .buttonStyle(.plain)
         .foregroundColor(.white)
-        .font(.system(size: 14, weight: .medium))
+        .font(.system(size: 16, weight: .medium))
     }
 
     private func compactNowPlayingContent(_ track: NowPlayingInfo) -> some View {
         HStack(spacing: 6) {
             artworkView(track.artwork, size: compactHeight - 12)
-            if track.isPlaying {
-                Text(track.title)
-                    .font(.caption2)
-                    .foregroundColor(.white.opacity(0.85))
-                    .lineLimit(1)
-            }
+            Text(track.title)
+                .font(.caption2)
+                .foregroundColor(.white.opacity(0.85))
+                .lineLimit(1)
             Spacer(minLength: 0)
         }
         .padding(.horizontal, 14)

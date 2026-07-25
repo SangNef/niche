@@ -3,8 +3,11 @@
 .swiftpm/
 .vscode/
 
-# Built app bundle (rebuild with Scripts/build_app.sh, or download from Releases)
+# Built app bundle / installer (rebuild with Scripts/build_app.sh + build_dmg.sh,
+# or download from Releases)
 /Niche.app
+/Niche.dmg
+/Niche.zip
 
 # Third-party dependency — Scripts/build_app.sh clones and builds this automatically
 vendor/mediaremote-adapter/

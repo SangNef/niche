@@ -35,10 +35,16 @@ struct NowPlayingInfo: Equatable {
 /// grants MediaRemote access. See vendor/mediaremote-adapter (github.com/ungive/mediaremote-adapter).
 final class NowPlayingProvider: ObservableObject {
     @Published private(set) var current: NowPlayingInfo?
+    /// True while a track is playing, or briefly after it pauses — lets the compact
+    /// pill linger for a grace period before the notch collapses back to idle.
+    @Published private(set) var isVisible = false
 
     private var process: Process?
     private var buffer = Data()
     private static let dateFormatter = ISO8601DateFormatter()
+    private static let pauseHideDelay: TimeInterval = 15
+
+    private var hideWorkItem: DispatchWorkItem?
 
     private var lastTrackKey: String?
     private var lastArtworkBase64: String?
@@ -141,8 +147,29 @@ final class NowPlayingProvider: ObservableObject {
 
         DispatchQueue.main.async { [weak self] in
             guard let self else { return }
-            if newValue != self.current { self.current = newValue }
+            guard newValue != self.current else { return }
+            self.current = newValue
+            self.updateVisibility(for: newValue)
         }
+    }
+
+    private func updateVisibility(for value: NowPlayingInfo?) {
+        hideWorkItem?.cancel()
+        hideWorkItem = nil
+
+        guard let value else {
+            isVisible = false
+            return
+        }
+
+        isVisible = true
+        guard !value.isPlaying else { return }
+
+        // Paused: keep showing the pill for a grace period, then collapse the notch
+        // back to idle if the user hasn't resumed playback by then.
+        let workItem = DispatchWorkItem { [weak self] in self?.isVisible = false }
+        hideWorkItem = workItem
+        DispatchQueue.main.asyncAfter(deadline: .now() + Self.pauseHideDelay, execute: workItem)
     }
 
 }

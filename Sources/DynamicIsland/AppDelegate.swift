@@ -8,6 +8,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private let volume = VolumeObserver()
     private let brightness = BrightnessObserver()
     private let bluetoothHeadphones = BluetoothHeadphoneObserver()
+    private let updateChecker = UpdateChecker()
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         guard let screen = NSScreen.main else { return }
@@ -29,7 +30,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             nowPlaying: nowPlaying,
             volume: volume,
             brightness: brightness,
-            bluetoothHeadphones: bluetoothHeadphones
+            bluetoothHeadphones: bluetoothHeadphones,
+            updateChecker: updateChecker
         )
         let hostingView = ClickThroughHostingView(rootView: content)
         hostingView.hitTestModel = hitTestModel

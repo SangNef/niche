@@ -1,4 +1,5 @@
 import IOBluetooth
+import CoreBluetooth
 import Combine
 
 struct BluetoothHeadphoneInfo: Equatable {
@@ -14,9 +15,13 @@ struct BluetoothHeadphoneInfo: Equatable {
 /// Shows a transient HUD (reusing the same pill-based pattern as VolumeObserver/
 /// BrightnessObserver) when a Bluetooth headset connects, mimicking iOS's
 /// "AirPods connected" popup. Connection detection uses the public IOBluetoothDevice
-/// API; per-earbud battery percentages come from runtime properties AirPods-style
-/// devices expose (batteryPercentSingle/Left/Right/Case) that Apple never put in the
-/// public header — the same kind of KVC lookup many AirPods-battery menu bar apps use.
+/// API. Which devices count as "headphones" is decided from the Class of Device
+/// (public, Bluetooth-spec-standard bitfield) so this fires for any headset/
+/// headphones, not just Apple's — a mouse or keyboard connecting won't trigger it.
+/// Per-earbud battery percentages, when available, come from runtime properties
+/// AirPods-style devices expose (batteryPercentSingle/Left/Right/Case) that Apple
+/// never put in the public header — the same KVC lookup many AirPods-battery menu
+/// bar apps use. Third-party headsets that don't expose these just show name + icon.
 final class BluetoothHeadphoneObserver: NSObject, ObservableObject {
     @Published private(set) var connected: BluetoothHeadphoneInfo?
     @Published private(set) var isVisible = false
@@ -26,6 +31,16 @@ final class BluetoothHeadphoneObserver: NSObject, ObservableObject {
 
     override init() {
         super.init()
+        // If the user denies (or hasn't yet been asked for) Bluetooth access, registering
+        // for connect notifications touches IOBluetooth's CoreBluetooth-backed TCC check —
+        // skip it entirely so the app just runs without the headphone HUD instead of
+        // risking that path. .notDetermined is still allowed through so the very first
+        // connect prompts the user for permission, same as before this guard existed.
+        guard Self.isAuthorized else {
+            print("[Bluetooth] access not authorized (\(CBManager.authorization)); headphone HUD disabled")
+            return
+        }
+
         connectNotification = IOBluetoothDevice.register(
             forConnectNotifications: self,
             selector: #selector(bluetoothDeviceConnected(notification:device:))
@@ -34,11 +49,19 @@ final class BluetoothHeadphoneObserver: NSObject, ObservableObject {
 
     deinit { connectNotification?.unregister() }
 
+    private static var isAuthorized: Bool {
+        switch CBManager.authorization {
+        case .denied, .restricted: return false
+        case .notDetermined, .allowedAlways: return true
+        @unknown default: return true
+        }
+    }
+
     @objc private func bluetoothDeviceConnected(notification: IOBluetoothUserNotification, device: IOBluetoothDevice) {
+        guard Self.isHeadsetOrHeadphones(device) else { return }
         // Battery values arrive shortly after the connection completes, not instantly.
         DispatchQueue.main.asyncAfter(deadline: .now() + 1.2) { [weak self] in
-            guard let info = Self.headphoneInfo(for: device) else { return }
-            self?.show(info)
+            self?.show(Self.headphoneInfo(for: device))
         }
     }
 
@@ -52,27 +75,32 @@ final class BluetoothHeadphoneObserver: NSObject, ObservableObject {
         DispatchQueue.main.asyncAfter(deadline: .now() + 4, execute: workItem)
     }
 
-    private static func headphoneInfo(for device: IOBluetoothDevice) -> BluetoothHeadphoneInfo? {
+    /// Class of Device is a 24-bit field (Bluetooth Core Spec, Assigned Numbers):
+    /// bits 8-12 = major device class, bits 2-7 = minor device class. Major class
+    /// 0x04 is "Audio/Video"; the minor values below are the headset/headphones/
+    /// portable-audio/hifi variants within it — this covers AirPods, Beats, and
+    /// any generic Bluetooth headphones or headset.
+    private static func isHeadsetOrHeadphones(_ device: IOBluetoothDevice) -> Bool {
+        let classOfDevice = device.classOfDevice
+        let majorClass = (classOfDevice >> 8) & 0x1F
+        let minorClass = (classOfDevice >> 2) & 0x3F
+        let audioVideoMajorClass: UInt32 = 0x04
+        let headsetLikeMinorClasses: Set<UInt32> = [1, 2, 6, 7, 0x0A]
+        return majorClass == audioVideoMajorClass && headsetLikeMinorClasses.contains(minorClass)
+    }
+
+    private static func headphoneInfo(for device: IOBluetoothDevice) -> BluetoothHeadphoneInfo {
         func battery(_ key: String) -> Int? {
             guard let value = device.value(forKey: key) as? Int, value >= 0 else { return nil }
             return value
         }
 
-        let single = battery("batteryPercentSingle")
-        let left = battery("batteryPercentLeft")
-        let right = battery("batteryPercentRight")
-        let caseBattery = battery("batteryPercentCase")
-
-        // No battery properties at all means this isn't an AirPods-style headset —
-        // don't show the HUD for every random paired Bluetooth accessory.
-        guard single != nil || left != nil || right != nil || caseBattery != nil else { return nil }
-
         return BluetoothHeadphoneInfo(
             name: device.name ?? "Tai nghe Bluetooth",
-            singleBattery: single,
-            leftBattery: left,
-            rightBattery: right,
-            caseBattery: caseBattery
+            singleBattery: battery("batteryPercentSingle"),
+            leftBattery: battery("batteryPercentLeft"),
+            rightBattery: battery("batteryPercentRight"),
+            caseBattery: battery("batteryPercentCase")
         )
     }
 }
