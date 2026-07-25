@@ -11,6 +11,7 @@ struct IslandView: View {
     @ObservedObject var updateChecker: UpdateChecker
 
     @State private var isHovering = false
+    @State private var hoverWorkItem: DispatchWorkItem?
 
     private enum Mode {
         case volume, brightness, bluetooth, updateAvailable, expanded, compactNowPlaying, compactIdle
@@ -81,8 +82,21 @@ struct IslandView: View {
                     }
                 )
                 .onHover { hovering in
-                    withAnimation(.spring(response: 0.35, dampingFraction: 0.75)) {
-                        isHovering = hovering
+                    hoverWorkItem?.cancel()
+                    if hovering {
+                        // Small delay before expanding so a quick mouse pass-over the
+                        // notch doesn't pop it open — only a deliberate, held hover does.
+                        let workItem = DispatchWorkItem {
+                            withAnimation(.spring(response: 0.35, dampingFraction: 0.75)) {
+                                isHovering = true
+                            }
+                        }
+                        hoverWorkItem = workItem
+                        DispatchQueue.main.asyncAfter(deadline: .now() + 0.2, execute: workItem)
+                    } else {
+                        withAnimation(.spring(response: 0.35, dampingFraction: 0.75)) {
+                            isHovering = false
+                        }
                     }
                 }
                 .animation(.spring(response: 0.35, dampingFraction: 0.75), value: currentSize.width)

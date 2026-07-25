@@ -7,7 +7,7 @@
 <p align="center">A Dynamic Island for macOS — lives in your notch, shows what's playing, and more.</p>
 
 <p align="center">
-  <a href="https://github.com/SangNef/niche/releases/latest/download/Niche.dmg">
+  <a href="https://github.com/SangNef/niche/releases/latest">
     <strong>⬇️ Download the latest release</strong>
   </a>
 </p>
@@ -69,10 +69,10 @@ gh release create vX.Y.Z Niche.dmg --title "Niche vX.Y.Z" --notes "..."
 ```
 
 (Or upload `Niche.dmg` manually via the GitHub web UI under **Releases → Draft a new
-release**.) The download link at the top of this README always points at whatever
-asset named `Niche.dmg` is attached to the latest release — no need to update it
-between releases. Installed copies also poll the GitHub Releases API on launch and
-show an in-notch prompt when a newer tag is published.
+release**.) The download link at the top of this README always points at the latest
+release page — no need to update it between releases. Installed copies also poll the
+GitHub Releases API on launch and show an in-notch prompt when a newer tag is
+published.
 
 ## License
 
