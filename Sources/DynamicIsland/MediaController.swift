@@ -1,3 +1,4 @@
+import AppKit
 import Foundation
 
 /// Sends playback commands to the currently playing app via the bundled
@@ -10,6 +11,15 @@ enum MediaController {
     static func togglePlayPause() { send(togglePlayPauseCommand) }
     static func next() { send(nextTrackCommand) }
     static func previous() { send(previousTrackCommand) }
+
+    /// Brings the app currently reporting Now Playing info to the foreground —
+    /// Music, Spotify, or whichever browser has the tab playing. Launches it first
+    /// if it's not already running (matches how Control Center's Now Playing tile
+    /// behaves when clicked).
+    static func openSource(bundleIdentifier: String) {
+        guard let url = NSWorkspace.shared.urlForApplication(withBundleIdentifier: bundleIdentifier) else { return }
+        NSWorkspace.shared.openApplication(at: url, configuration: NSWorkspace.OpenConfiguration())
+    }
 
     private static func send(_ command: String) {
         guard let paths = MediaRemoteAdapterPaths.resolve() else { return }

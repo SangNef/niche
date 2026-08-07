@@ -9,6 +9,7 @@ struct IslandView: View {
     @ObservedObject var brightness: BrightnessObserver
     @ObservedObject var bluetoothHeadphones: BluetoothHeadphoneObserver
     @ObservedObject var updateChecker: UpdateChecker
+    @ObservedObject var settings: AppSettings
 
     @State private var isHovering = false
     @State private var hoverWorkItem: DispatchWorkItem?
@@ -25,10 +26,16 @@ struct IslandView: View {
         if volume.isVisible { return .volume }
         if brightness.isVisible { return .brightness }
         if updateChecker.isVisible { return .updateAvailable }
-        if isHovering { return .expanded }
+        // Nothing playing: hovering just nudges the pill bigger (see scaleEffect
+        // below) instead of expanding into an empty "no music" panel.
+        if isHovering && nowPlaying.current != nil { return .expanded }
         if nowPlaying.isVisible { return .compactNowPlaying }
         return .compactIdle
     }
+
+    /// True only while hovering the idle pill (nothing playing, no HUD/bluetooth/
+    /// update override) — the one case that gets a subtle scale bump instead of expanding.
+    private var isIdleHover: Bool { isHovering && mode == .compactIdle }
 
     private var compactSize: CGSize {
         CGSize(width: max(notchWidth + 60, 160), height: compactHeight)
@@ -73,6 +80,7 @@ struct IslandView: View {
             NotchShape(topCornerRadius: topCornerRadius, bottomCornerRadius: bottomCornerRadius)
                 .fill(Color.black)
                 .frame(width: currentSize.width, height: currentSize.height)
+                .scaleEffect(isIdleHover ? 1.08 : 1.0)
                 .overlay(content)
                 .background(
                     GeometryReader { proxy in
@@ -92,7 +100,7 @@ struct IslandView: View {
                             }
                         }
                         hoverWorkItem = workItem
-                        DispatchQueue.main.asyncAfter(deadline: .now() + 0.2, execute: workItem)
+                        DispatchQueue.main.asyncAfter(deadline: .now() + settings.hoverExpandDelay, execute: workItem)
                     } else {
                         withAnimation(.spring(response: 0.35, dampingFraction: 0.75)) {
                             isHovering = false
@@ -101,6 +109,7 @@ struct IslandView: View {
                 }
                 .animation(.spring(response: 0.35, dampingFraction: 0.75), value: currentSize.width)
                 .animation(.spring(response: 0.35, dampingFraction: 0.75), value: mode)
+                .animation(.spring(response: 0.35, dampingFraction: 0.75), value: isIdleHover)
 
             Spacer()
         }
@@ -301,6 +310,8 @@ struct IslandView: View {
                     .symbolEffect(
                         .variableColor.iterative, options: .repeating, isActive: track.isPlaying)
             }
+            .contentShape(Rectangle())
+            .onTapGesture { openNowPlayingSource(track) }
 
             VStack(spacing: 6) {
                 progressBar(progress)
@@ -371,6 +382,14 @@ struct IslandView: View {
             Spacer(minLength: 0)
         }
         .padding(.horizontal, 14)
+        .contentShape(Rectangle())
+        .onTapGesture { openNowPlayingSource(track) }
+    }
+
+    /// Brings the app that's actually playing (Music, Spotify, a browser tab, ...)
+    /// to the foreground — matches tapping Control Center's Now Playing tile.
+    private func openNowPlayingSource(_ track: NowPlayingInfo) {
+        nowPlaying.openSource(for: track)
     }
 
     @ViewBuilder

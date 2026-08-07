@@ -22,20 +22,40 @@ struct BluetoothHeadphoneInfo: Equatable {
 /// AirPods-style devices expose (batteryPercentSingle/Left/Right/Case) that Apple
 /// never put in the public header — the same KVC lookup many AirPods-battery menu
 /// bar apps use. Third-party headsets that don't expose these just show name + icon.
+///
+/// Registration only happens while Preferences' "Phát hiện tai nghe Bluetooth"
+/// toggle is on — flipping it is what triggers the system Bluetooth permission
+/// prompt, not app launch, so nothing is asked for until the user opts in.
 final class BluetoothHeadphoneObserver: NSObject, ObservableObject {
     @Published private(set) var connected: BluetoothHeadphoneInfo?
     @Published private(set) var isVisible = false
 
     private var connectNotification: IOBluetoothUserNotification?
     private var hideWorkItem: DispatchWorkItem?
+    private var settingsCancellable: AnyCancellable?
 
-    override init() {
+    init(settings: AppSettings) {
         super.init()
+        settingsCancellable = settings.$bluetoothHeadphoneDetectionEnabled
+            .removeDuplicates()
+            .sink { [weak self] enabled in self?.setEnabled(enabled) }
+    }
+
+    deinit { connectNotification?.unregister() }
+
+    private func setEnabled(_ enabled: Bool) {
+        guard enabled else {
+            connectNotification?.unregister()
+            connectNotification = nil
+            return
+        }
+        guard connectNotification == nil else { return }
+
         // If the user denies (or hasn't yet been asked for) Bluetooth access, registering
         // for connect notifications touches IOBluetooth's CoreBluetooth-backed TCC check —
         // skip it entirely so the app just runs without the headphone HUD instead of
-        // risking that path. .notDetermined is still allowed through so the very first
-        // connect prompts the user for permission, same as before this guard existed.
+        // risking that path. .notDetermined is still allowed through so this first
+        // registration is what prompts the user for permission.
         guard Self.isAuthorized else {
             print("[Bluetooth] access not authorized (\(CBManager.authorization)); headphone HUD disabled")
             return
@@ -46,8 +66,6 @@ final class BluetoothHeadphoneObserver: NSObject, ObservableObject {
             selector: #selector(bluetoothDeviceConnected(notification:device:))
         )
     }
-
-    deinit { connectNotification?.unregister() }
 
     private static var isAuthorized: Bool {
         switch CBManager.authorization {

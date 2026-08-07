@@ -12,6 +12,10 @@ struct NowPlayingInfo: Equatable {
     var elapsedTime: Double
     var playbackRate: Double
     var timestamp: Date
+    /// The playing app's bundle identifier (e.g. "com.spotify.client",
+    /// "com.apple.Music", or a browser's if it's playing a tab) — always present
+    /// per the adapter's payload contract. Used to bring that app forward on tap.
+    var sourceBundleIdentifier: String?
 
     static func == (lhs: NowPlayingInfo, rhs: NowPlayingInfo) -> Bool {
         lhs.title == rhs.title && lhs.artist == rhs.artist && lhs.isPlaying == rhs.isPlaying
@@ -39,19 +43,27 @@ final class NowPlayingProvider: ObservableObject {
     /// pill linger for a grace period before the notch collapses back to idle.
     @Published private(set) var isVisible = false
 
+    private let settings: AppSettings
     private var process: Process?
     private var buffer = Data()
     private static let dateFormatter = ISO8601DateFormatter()
-    private static let pauseHideDelay: TimeInterval = 15
+    private static let tabCacheExpiryDelay: TimeInterval = 5 * 60
 
     private var hideWorkItem: DispatchWorkItem?
+    private var tabCacheExpiryWorkItem: DispatchWorkItem?
+
+    /// Track key -> matched browser tab URL (see BrowserTabLocator), so a repeat tap
+    /// on the same track doesn't need to re-search open tabs. Cleared a few minutes
+    /// after the pill goes idle so it doesn't hold onto stale tab references.
+    private var tabURLCache: [String: String] = [:]
 
     private var lastTrackKey: String?
     private var lastArtworkBase64: String?
     private var cachedArtwork: NSImage?
     private var cachedAccentColor = Color.white.opacity(0.5)
 
-    init() {
+    init(settings: AppSettings) {
+        self.settings = settings
         start()
     }
 
@@ -141,7 +153,8 @@ final class NowPlayingProvider: ObservableObject {
                 duration: duration,
                 elapsedTime: elapsedTime,
                 playbackRate: playbackRate,
-                timestamp: timestamp
+                timestamp: timestamp,
+                sourceBundleIdentifier: payload["bundleIdentifier"] as? String
             )
         }
 
@@ -158,18 +171,62 @@ final class NowPlayingProvider: ObservableObject {
         hideWorkItem = nil
 
         guard let value else {
-            isVisible = false
+            setHidden()
             return
         }
 
         isVisible = true
+        tabCacheExpiryWorkItem?.cancel()
+        tabCacheExpiryWorkItem = nil
         guard !value.isPlaying else { return }
 
         // Paused: keep showing the pill for a grace period, then collapse the notch
         // back to idle if the user hasn't resumed playback by then.
-        let workItem = DispatchWorkItem { [weak self] in self?.isVisible = false }
+        let workItem = DispatchWorkItem { [weak self] in self?.setHidden() }
         hideWorkItem = workItem
-        DispatchQueue.main.asyncAfter(deadline: .now() + Self.pauseHideDelay, execute: workItem)
+        DispatchQueue.main.asyncAfter(deadline: .now() + settings.pauseHideDelay, execute: workItem)
+    }
+
+    /// Marks the pill hidden and, after a few minutes of staying that way, drops the
+    /// cached browser-tab URLs — otherwise they'd just accumulate for tracks long
+    /// since stopped, pointing at tabs that may no longer even exist.
+    private func setHidden() {
+        isVisible = false
+
+        tabCacheExpiryWorkItem?.cancel()
+        let workItem = DispatchWorkItem { [weak self] in self?.tabURLCache.removeAll() }
+        tabCacheExpiryWorkItem = workItem
+        DispatchQueue.main.asyncAfter(deadline: .now() + Self.tabCacheExpiryDelay, execute: workItem)
+    }
+
+    /// Brings the app that's actually playing to the foreground — Music, Spotify, or
+    /// (best-effort, see BrowserTabLocator) the exact browser tab if the source is a
+    /// scriptable browser AND Preferences' "Mở đúng tab trình duyệt" toggle is on.
+    /// That toggle is what triggers the browser's Automation permission prompt, not
+    /// tapping the pill, so nothing is asked for until the user opts in. Falls back
+    /// to just activating the app when the toggle is off, the tab can't be found, or
+    /// the browser isn't scriptable.
+    func openSource(for track: NowPlayingInfo) {
+        guard let bundleIdentifier = track.sourceBundleIdentifier else { return }
+        guard settings.browserTabJumpEnabled, BrowserTabLocator.isSupported(bundleIdentifier: bundleIdentifier) else {
+            MediaController.openSource(bundleIdentifier: bundleIdentifier)
+            return
+        }
+
+        let key = "\(bundleIdentifier)||\(track.title)||\(track.artist)"
+        let cachedURL = tabURLCache[key]
+        let title = track.title
+
+        DispatchQueue.global(qos: .userInitiated).async { [weak self] in
+            if let cachedURL, BrowserTabLocator.activateTab(url: cachedURL, bundleIdentifier: bundleIdentifier) {
+                return
+            }
+            if let url = BrowserTabLocator.findAndActivateTab(titleContains: title, bundleIdentifier: bundleIdentifier) {
+                DispatchQueue.main.async { self?.tabURLCache[key] = url }
+                return
+            }
+            MediaController.openSource(bundleIdentifier: bundleIdentifier)
+        }
     }
 
 }

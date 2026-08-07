@@ -1,22 +1,31 @@
 import Cocoa
 import SwiftUI
-import ServiceManagement
 
 final class AppDelegate: NSObject, NSApplicationDelegate {
     private var panel: NotchPanel!
     private var clickThroughTimer: Timer?
     private var statusItem: NSStatusItem?
-    private let nowPlaying = NowPlayingProvider()
+    private var preferencesWindow: NSWindow?
+
+    private let settings = AppSettings()
     private let volume = VolumeObserver()
     private let brightness = BrightnessObserver()
-    private let bluetoothHeadphones = BluetoothHeadphoneObserver()
-    private let updateChecker = UpdateChecker()
+    private let nowPlaying: NowPlayingProvider
+    private let updateChecker: UpdateChecker
+    private let bluetoothHeadphones: BluetoothHeadphoneObserver
+
+    override init() {
+        nowPlaying = NowPlayingProvider(settings: settings)
+        updateChecker = UpdateChecker(settings: settings)
+        bluetoothHeadphones = BluetoothHeadphoneObserver(settings: settings)
+        super.init()
+    }
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         configurePanel()
         setupStatusItem()
         startClickThroughTracking()
-        registerAsLoginItem()
+        settings.syncLoginItem()
 
         // Reconfigure when displays are connected/disconnected/rearranged, so the
         // pill follows whichever screen is primary instead of staying stuck on
@@ -55,7 +64,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             volume: volume,
             brightness: brightness,
             bluetoothHeadphones: bluetoothHeadphones,
-            updateChecker: updateChecker
+            updateChecker: updateChecker,
+            settings: settings
         )
         let hostingView = ClickThroughHostingView(rootView: content)
         hostingView.hitTestModel = hitTestModel
@@ -111,10 +121,35 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
 
         let menu = NSMenu()
+        menu.addItem(NSMenuItem(title: "Preferences…", action: #selector(showPreferences), keyEquivalent: ","))
+        menu.addItem(.separator())
         menu.addItem(NSMenuItem(title: "Quit Niche", action: #selector(quitApp), keyEquivalent: "q"))
         item.menu = menu
 
         statusItem = item
+    }
+
+    @objc private func showPreferences() {
+        if preferencesWindow == nil {
+            let view = PreferencesView(settings: settings, updateChecker: updateChecker)
+            let window = NSWindow(
+                contentRect: .zero,
+                styleMask: [.titled, .closable],
+                backing: .buffered,
+                defer: false
+            )
+            window.title = "Niche Preferences"
+            window.titlebarAppearsTransparent = true
+            window.titleVisibility = .hidden
+            window.appearance = NSAppearance(named: .darkAqua)
+            window.contentView = NSHostingView(rootView: view)
+            window.isReleasedWhenClosed = false
+            window.setContentSize(NSSize(width: 640, height: 460))
+            window.center()
+            preferencesWindow = window
+        }
+        NSApp.activate(ignoringOtherApps: true)
+        preferencesWindow?.makeKeyAndOrderFront(nil)
     }
 
     /// A monochrome glyph echoing the app icon's pill-with-two-dots shape, drawn in
@@ -150,14 +185,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     @objc private func quitApp() {
         NSApplication.shared.terminate(nil)
-    }
-
-    /// Registers this app to launch at login. Only takes effect when running from a
-    /// proper .app bundle (see Scripts/build_app.sh) — silently no-ops otherwise.
-    private func registerAsLoginItem() {
-        guard #available(macOS 13.0, *) else { return }
-        guard Bundle.main.bundleURL.pathExtension == "app" else { return }
-        try? SMAppService.mainApp.register()
     }
 
     /// macOS 12+ exposes the rectangles flanking the physical notch.

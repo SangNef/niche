@@ -2,6 +2,7 @@
 .build/
 .swiftpm/
 .vscode/
+./claude/
 
 # Built app bundle / installer (rebuild with Scripts/build_app.sh + build_dmg.sh,
 # or download from Releases)

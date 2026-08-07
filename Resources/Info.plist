@@ -13,15 +13,15 @@
     <key>CFBundlePackageType</key>
     <string>APPL</string>
     <key>CFBundleShortVersionString</key>
-    <string>0.2.1</string>
+    <string>0.2.2</string>
     <key>CFBundleVersion</key>
-    <string>3</string>
+    <string>4</string>
     <key>LSMinimumSystemVersion</key>
     <string>14.0</string>
     <key>LSUIElement</key>
     <true/>
     <key>NSAppleEventsUsageDescription</key>
-    <string>Niche cần quyền này để đọc bài hát đang phát từ Music và Spotify.</string>
+    <string>Niche cần quyền này để đọc bài hát đang phát và mở đúng tab trình duyệt khi bạn bấm vào (Music, Spotify, Safari, Chrome).</string>
     <key>NSBluetoothAlwaysUsageDescription</key>
     <string>Niche cần quyền này để phát hiện tai nghe Bluetooth kết nối và hiển thị mức pin.</string>
     <key>NSHighResolutionCapable</key>
