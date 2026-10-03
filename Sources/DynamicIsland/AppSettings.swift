@@ -13,6 +13,7 @@ final class AppSettings: ObservableObject {
         static let checkForUpdatesAutomatically = "checkForUpdatesAutomatically"
         static let bluetoothHeadphoneDetectionEnabled = "bluetoothHeadphoneDetectionEnabled"
         static let browserTabJumpEnabled = "browserTabJumpEnabled"
+        static let disableOnFullScreen = "disableOnFullScreen"
     }
 
     @Published var launchAtLogin: Bool {
@@ -42,6 +43,11 @@ final class AppSettings: ObservableObject {
     @Published var browserTabJumpEnabled: Bool {
         didSet { UserDefaults.standard.set(browserTabJumpEnabled, forKey: Keys.browserTabJumpEnabled) }
     }
+    /// When on, the notch panel hides itself while the frontmost app is full
+    /// screen (see FullScreenObserver) instead of staying on top of it.
+    @Published var disableOnFullScreen: Bool {
+        didSet { UserDefaults.standard.set(disableOnFullScreen, forKey: Keys.disableOnFullScreen) }
+    }
 
     init() {
         let defaults = UserDefaults.standard
@@ -52,6 +58,7 @@ final class AppSettings: ObservableObject {
             Keys.checkForUpdatesAutomatically: true,
             Keys.bluetoothHeadphoneDetectionEnabled: false,
             Keys.browserTabJumpEnabled: false,
+            Keys.disableOnFullScreen: false,
         ])
         launchAtLogin = defaults.bool(forKey: Keys.launchAtLogin)
         hoverExpandDelay = defaults.double(forKey: Keys.hoverExpandDelay)
@@ -59,6 +66,7 @@ final class AppSettings: ObservableObject {
         checkForUpdatesAutomatically = defaults.bool(forKey: Keys.checkForUpdatesAutomatically)
         bluetoothHeadphoneDetectionEnabled = defaults.bool(forKey: Keys.bluetoothHeadphoneDetectionEnabled)
         browserTabJumpEnabled = defaults.bool(forKey: Keys.browserTabJumpEnabled)
+        disableOnFullScreen = defaults.bool(forKey: Keys.disableOnFullScreen)
     }
 
     /// Registers/unregisters the login item to match `launchAtLogin`. Call once at

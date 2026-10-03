@@ -48,6 +48,12 @@ final class NowPlayingProvider: ObservableObject {
     private var buffer = Data()
     private static let dateFormatter = ISO8601DateFormatter()
     private static let tabCacheExpiryDelay: TimeInterval = 5 * 60
+    private static let restartDelay: TimeInterval = 2
+
+    /// Set right before a deliberate `process.terminate()` (deinit) so the
+    /// termination handler below can tell that apart from a crash and skip
+    /// the auto-restart.
+    private var isStopping = false
 
     private var hideWorkItem: DispatchWorkItem?
     private var tabCacheExpiryWorkItem: DispatchWorkItem?
@@ -67,13 +73,18 @@ final class NowPlayingProvider: ObservableObject {
         start()
     }
 
-    deinit { process?.terminate() }
+    deinit {
+        isStopping = true
+        process?.terminate()
+    }
 
     private func start() {
         guard let paths = MediaRemoteAdapterPaths.resolve() else {
             print("[NowPlaying] mediaremote-adapter script/framework not found; now-playing disabled")
             return
         }
+
+        buffer.removeAll()
 
         let process = Process()
         process.executableURL = URL(fileURLWithPath: "/usr/bin/perl")
@@ -85,6 +96,20 @@ final class NowPlayingProvider: ObservableObject {
 
         pipe.fileHandleForReading.readabilityHandler = { [weak self] handle in
             self?.handle(handle.availableData)
+        }
+
+        // The adapter can die on its own (perl/MediaRemote hiccup, not just a
+        // deliberate stop) — without noticing that, Now Playing would just go
+        // silent for the rest of the app's lifetime. Restart it after a short
+        // delay unless this termination was us tearing the object down.
+        process.terminationHandler = { [weak self] _ in
+            DispatchQueue.main.async {
+                guard let self, !self.isStopping else { return }
+                self.process = nil
+                DispatchQueue.main.asyncAfter(deadline: .now() + Self.restartDelay) { [weak self] in
+                    self?.start()
+                }
+            }
         }
 
         do {

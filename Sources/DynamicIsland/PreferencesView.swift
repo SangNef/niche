@@ -167,6 +167,14 @@ struct PreferencesView: View {
                 PreferenceDivider()
                 PreferenceToggleRow(title: "Mở đúng tab trình duyệt khi bấm vào", isOn: $settings.browserTabJumpEnabled)
             }
+
+            PreferenceGroup(caption: "Toàn màn hình") {
+                PreferenceToggleRow(
+                    title: "Ẩn khi ứng dụng toàn màn hình",
+                    subtitle: "Tự động ẩn Dynamic Island khi ứng dụng đang mở ở chế độ toàn màn hình.",
+                    isOn: $settings.disableOnFullScreen
+                )
+            }
         }
     }
 

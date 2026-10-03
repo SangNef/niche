@@ -116,11 +116,88 @@ final class BrightnessObserver: ObservableObject {
         )
         guard let changedLevel = Self.changedLevel(from: lastKnownLevels, to: current) else {
             lastKnownLevels = current
+            pollMonitorControl()
             return
         }
         lastKnownLevels = current
         level = changedLevel
         show()
+    }
+
+    // MARK: - MonitorControl bridge
+    //
+    // MonitorControl (github.com/MonitorControl/MonitorControl) drives external
+    // displays over DDC/CI, writing brightness straight to the monitor's own
+    // hardware register — nothing macOS itself tracks, so none of the private
+    // APIs above ever see it, confirming the "NOT readable via any API" diagnostic
+    // logged at startup for DDC-only displays. It also installs its own key tap
+    // for the brightness keys (to redirect them to DDC instead of the built-in
+    // display), which swallows the NSSystemDefined event before it ever reaches
+    // handleSystemDefinedEvent below — so neither the real-brightness poll nor
+    // the synthesized-level key fallback can see MonitorControl-driven changes,
+    // from the keyboard or from its own menu bar slider alike.
+    //
+    // The one thing MonitorControl does surface is its own preferences, where it
+    // persists the last value it set per display as "value16(<model+serial>@<n>)"
+    // — VCP feature code 0x10 (16 decimal) is the DDC/CI "Luminance" (brightness)
+    // control; "value18"/"value98" alongside it are contrast (0x12) and speaker
+    // volume (0x62), confirming the numbering. This is undocumented internal
+    // state, not a public API — it could change in a future MonitorControl
+    // release.
+    //
+    // Reading that back via the *file* (NSDictionary(contentsOfFile:) on
+    // ~/Library/Preferences/app.monitorcontrol.MonitorControl.plist) only
+    // reflects whatever cfprefsd last flushed to disk, which it batches on its
+    // own schedule rather than on every write — that's why an earlier version of
+    // this bridge only caught brightness changes intermittently. Going through
+    // CFPreferencesCopy{KeyList,Value} instead asks cfprefsd itself, which
+    // answers from its live in-memory store (any process's preference reads
+    // and writes go through this same daemon), so it reflects a keypress within
+    // one 0.2s poll tick instead of waiting on an unpredictable disk flush.
+    private static let monitorControlDomain = "app.monitorcontrol.MonitorControl" as CFString
+
+    private var lastMonitorControlBrightnessValues: [String: Float] = [:]
+    private var hasSeededMonitorControlBaseline = false
+
+    private func pollMonitorControl() {
+        let current = Self.readMonitorControlBrightnessValues()
+        guard !current.isEmpty else { return }
+        defer { lastMonitorControlBrightnessValues = current }
+
+        // First sighting (app just launched, or MonitorControl just wrote its
+        // very first value) — seed the baseline instead of treating "no prior
+        // value for this display" as a change.
+        guard hasSeededMonitorControlBaseline else {
+            hasSeededMonitorControlBaseline = true
+            return
+        }
+
+        guard let changed = current.first(where: { key, value in
+            guard let old = lastMonitorControlBrightnessValues[key] else { return false }
+            return abs(old - value) > 0.005
+        }) else { return }
+
+        level = changed.value
+        show()
+    }
+
+    /// `~/Library/Preferences/<domain>.plist` (what MonitorControl uses) is the
+    /// "AnyHost" domain — `kCFPreferencesCurrentHost` is a different one, for the
+    /// per-machine `ByHost/<domain>.<hw-uuid>.plist` variant, and silently
+    /// returns nothing for a plain per-user domain like this.
+    private static func readMonitorControlBrightnessValues() -> [String: Float] {
+        guard let keyList = CFPreferencesCopyKeyList(
+            monitorControlDomain, kCFPreferencesCurrentUser, kCFPreferencesAnyHost
+        ) as? [String] else { return [:] }
+
+        var result: [String: Float] = [:]
+        for key in keyList where key.hasPrefix("value16(") {
+            guard let value = CFPreferencesCopyValue(
+                key as CFString, monitorControlDomain, kCFPreferencesCurrentUser, kCFPreferencesAnyHost
+            ) as? NSNumber else { continue }
+            result[key] = value.floatValue
+        }
+        return result
     }
 
     private func show() {
@@ -215,6 +292,8 @@ final class BrightnessObserver: ObservableObject {
         print("[Brightness] CoreDisplay_Display_GetUserBrightness loaded: \(getCoreDisplayBrightness != nil)")
         let displays = activeDisplayIDs()
         print("[Brightness] active displays: \(displays.count)")
+        let monitorControlValueCount = readMonitorControlBrightnessValues().count
+        print("[Brightness] MonitorControl brightness keys visible via cfprefsd: \(monitorControlValueCount)")
         for displayID in displays {
             let builtIn = CGDisplayIsBuiltin(displayID) != 0
             if let level = levels[displayID] {

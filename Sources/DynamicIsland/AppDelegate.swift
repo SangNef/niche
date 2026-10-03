@@ -1,4 +1,5 @@
 import Cocoa
+import Combine
 import SwiftUI
 
 final class AppDelegate: NSObject, NSApplicationDelegate {
@@ -6,18 +7,23 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var clickThroughTimer: Timer?
     private var statusItem: NSStatusItem?
     private var preferencesWindow: NSWindow?
+    private var fullScreenCancellable: AnyCancellable?
 
     private let settings = AppSettings()
     private let volume = VolumeObserver()
     private let brightness = BrightnessObserver()
+    private let battery = BatteryObserver()
+    private let capsLock = CapsLockObserver()
     private let nowPlaying: NowPlayingProvider
     private let updateChecker: UpdateChecker
     private let bluetoothHeadphones: BluetoothHeadphoneObserver
+    private let fullScreenObserver: FullScreenObserver
 
     override init() {
         nowPlaying = NowPlayingProvider(settings: settings)
         updateChecker = UpdateChecker(settings: settings)
         bluetoothHeadphones = BluetoothHeadphoneObserver(settings: settings)
+        fullScreenObserver = FullScreenObserver(settings: settings)
         super.init()
     }
 
@@ -26,6 +32,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         setupStatusItem()
         startClickThroughTracking()
         settings.syncLoginItem()
+
+        fullScreenCancellable = fullScreenObserver.$isFullScreen
+            .removeDuplicates()
+            .sink { [weak self] isFullScreen in self?.updatePanelVisibility(hiddenByFullScreen: isFullScreen) }
 
         // Reconfigure when displays are connected/disconnected/rearranged, so the
         // pill follows whichever screen is primary instead of staying stuck on
@@ -40,6 +50,19 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     @objc private func screenParametersChanged() {
         configurePanel()
+    }
+
+    /// Orders the panel out while the frontmost app is full screen (when the
+    /// user has opted into "Ẩn khi ứng dụng toàn màn hình"), and back in once
+    /// it isn't — instead of relying on `.fullScreenAuxiliary`, which keeps
+    /// the panel visible in full screen Spaces by default.
+    private func updatePanelVisibility(hiddenByFullScreen: Bool) {
+        guard let panel else { return }
+        if hiddenByFullScreen {
+            panel.orderOut(nil)
+        } else {
+            panel.orderFrontRegardless()
+        }
     }
 
     /// Rebuilds the panel's frame and content for the current primary screen.
@@ -63,6 +86,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             nowPlaying: nowPlaying,
             volume: volume,
             brightness: brightness,
+            battery: battery,
+            capsLock: capsLock,
             bluetoothHeadphones: bluetoothHeadphones,
             updateChecker: updateChecker,
             settings: settings
@@ -141,7 +166,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             window.title = "Niche Preferences"
             window.titlebarAppearsTransparent = true
             window.titleVisibility = .hidden
-            window.appearance = NSAppearance(named: .darkAqua)
             window.contentView = NSHostingView(rootView: view)
             window.isReleasedWhenClosed = false
             window.setContentSize(NSSize(width: 640, height: 460))

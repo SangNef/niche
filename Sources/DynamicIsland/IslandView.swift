@@ -7,6 +7,8 @@ struct IslandView: View {
     @ObservedObject var nowPlaying: NowPlayingProvider
     @ObservedObject var volume: VolumeObserver
     @ObservedObject var brightness: BrightnessObserver
+    @ObservedObject var battery: BatteryObserver
+    @ObservedObject var capsLock: CapsLockObserver
     @ObservedObject var bluetoothHeadphones: BluetoothHeadphoneObserver
     @ObservedObject var updateChecker: UpdateChecker
     @ObservedObject var settings: AppSettings
@@ -15,7 +17,7 @@ struct IslandView: View {
     @State private var hoverWorkItem: DispatchWorkItem?
 
     private enum Mode {
-        case volume, brightness, bluetooth, updateAvailable, expanded, compactNowPlaying, compactIdle
+        case volume, brightness, battery, capsLock, bluetooth, updateAvailable, expanded, compactNowPlaying, compactIdle
     }
 
     private var mode: Mode {
@@ -25,6 +27,8 @@ struct IslandView: View {
         if bluetoothHeadphones.isVisible { return .bluetooth }
         if volume.isVisible { return .volume }
         if brightness.isVisible { return .brightness }
+        if battery.isVisible { return .battery }
+        if capsLock.isVisible { return .capsLock }
         if updateChecker.isVisible { return .updateAvailable }
         // Nothing playing: hovering just nudges the pill bigger (see scaleEffect
         // below) instead of expanding into an empty "no music" panel.
@@ -52,8 +56,8 @@ struct IslandView: View {
 
     private var currentSize: CGSize {
         switch mode {
-        case .volume, .brightness: hudSize
-        case .bluetooth: bluetoothSize
+        case .volume, .brightness, .capsLock: hudSize
+        case .battery, .bluetooth: bluetoothSize
         case .updateAvailable: updateSize
         case .expanded: expandedSize
         case .compactNowPlaying: compactSize
@@ -68,8 +72,8 @@ struct IslandView: View {
     private var bottomCornerRadius: CGFloat {
         switch mode {
         case .expanded: 40
-        case .volume, .brightness: 20
-        case .bluetooth: 22
+        case .volume, .brightness, .capsLock: 20
+        case .battery, .bluetooth: 22
         case .updateAvailable: 22
         case .compactNowPlaying, .compactIdle: compactHeight / 2.8
         }
@@ -123,6 +127,10 @@ struct IslandView: View {
             hudContent(iconName: volumeIconName, level: volume.isMuted ? 0 : volume.level, tint: Self.volumeTint)
         case .brightness:
             hudContent(iconName: brightnessIconName, level: brightness.level, tint: Self.brightnessTint)
+        case .battery:
+            batteryContent(percentage: battery.percentage, isCharging: battery.isCharging, isPluggedIn: battery.isPluggedIn)
+        case .capsLock:
+            capsLockContent(isOn: capsLock.isOn)
         case .bluetooth:
             if let device = bluetoothHeadphones.connected { bluetoothContent(device) }
         case .updateAvailable:
@@ -204,6 +212,63 @@ struct IslandView: View {
                     .foregroundColor(.white.opacity(0.6))
                 }
             }
+            Spacer(minLength: 0)
+        }
+        .padding(.horizontal, 16)
+    }
+
+    private func batteryContent(percentage: Int, isCharging: Bool, isPluggedIn: Bool) -> some View {
+        HStack(spacing: 10) {
+            ZStack {
+                Circle()
+                    .fill(
+                        LinearGradient(
+                            colors: [Color.white.opacity(0.22), Color.white.opacity(0.04)],
+                            startPoint: .top,
+                            endPoint: .bottom
+                        )
+                    )
+                    .frame(width: 34, height: 34)
+                Image(systemName: batteryIconName(for: percentage))
+                    .font(.system(size: 16))
+                    .symbolRenderingMode(.hierarchical)
+                    .foregroundStyle(isCharging ? Self.volumeTint : .white)
+            }
+            VStack(alignment: .leading, spacing: 2) {
+                HStack(spacing: 4) {
+                    Text(batteryStatusText(isPluggedIn: isPluggedIn, isCharging: isCharging))
+                        .font(.caption)
+                        .foregroundColor(.white)
+                    if isCharging {
+                        Image(systemName: "bolt.fill")
+                            .font(.system(size: 9))
+                            .foregroundStyle(Self.volumeTint)
+                    }
+                }
+                Text("\(percentage)%")
+                    .font(.system(size: 10))
+                    .foregroundColor(.white.opacity(0.6))
+            }
+            Spacer(minLength: 0)
+        }
+        .padding(.horizontal, 16)
+    }
+
+    private func batteryStatusText(isPluggedIn: Bool, isCharging: Bool) -> String {
+        if isCharging { return "Đang sạc" }
+        if isPluggedIn { return "Đã sạc đầy" }
+        return "Đã rút sạc"
+    }
+
+    private func capsLockContent(isOn: Bool) -> some View {
+        HStack(spacing: 12) {
+            Image(systemName: "capslock.fill")
+                .font(.system(size: 14, weight: .semibold))
+                .foregroundStyle(isOn ? Self.volumeTint : .white.opacity(0.5))
+                .frame(width: 20, alignment: .center)
+            Text(isOn ? "Caps Lock bật" : "Caps Lock tắt")
+                .font(.caption)
+                .foregroundColor(.white)
             Spacer(minLength: 0)
         }
         .padding(.horizontal, 16)
